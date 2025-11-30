@@ -21,56 +21,65 @@ export class LiveSession {
   }
 
   async connect(callbacks: LiveSessionCallbacks, systemInstruction: string) {
-    this.audioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
-    this.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    // Ensure any previous session on this instance is cleaned up
+    await this.disconnect();
 
-    this.sessionPromise = this.ai.live.connect({
-      model: 'gemini-2.5-flash-native-audio-preview-09-2025',
-      callbacks: {
-        onopen: () => {
-            console.log("Live Session Opened");
-            this.startAudioStream();
-            if (callbacks.onOpen) callbacks.onOpen();
-        },
-        onmessage: (message: LiveServerMessage) => {
-            // Handle Audio Output
-            const base64Audio = message.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data;
-            if (base64Audio && callbacks.onAudioData) {
-                callbacks.onAudioData(base64Audio);
+    try {
+        this.audioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
+        this.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        
+        this.sessionPromise = this.ai.live.connect({
+          model: 'gemini-2.5-flash-native-audio-preview-09-2025',
+          callbacks: {
+            onopen: () => {
+                console.log("Live Session Opened");
+                this.startAudioStream();
+                if (callbacks.onOpen) callbacks.onOpen();
+            },
+            onmessage: (message: LiveServerMessage) => {
+                // Handle Audio Output
+                const base64Audio = message.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data;
+                if (base64Audio && callbacks.onAudioData) {
+                    callbacks.onAudioData(base64Audio);
+                }
+
+                // Handle Transcriptions
+                 if (message.serverContent?.outputTranscription) {
+                     const text = message.serverContent.outputTranscription.text;
+                     if (callbacks.onTranscription) callbacks.onTranscription(text, false);
+                 } else if (message.serverContent?.inputTranscription) {
+                     const text = message.serverContent.inputTranscription.text;
+                      if (callbacks.onTranscription) callbacks.onTranscription(text, true);
+                 }
+
+                if (message.serverContent?.turnComplete) {
+                    // Turn complete logic if needed
+                }
+            },
+            onclose: () => {
+                console.log("Live Session Closed");
+                if (callbacks.onClose) callbacks.onClose();
+            },
+            onerror: (err) => {
+                console.error("Live Session Error", err);
+                if (callbacks.onError) callbacks.onError(err);
             }
-
-            // Handle Transcriptions
-             if (message.serverContent?.outputTranscription) {
-                 const text = message.serverContent.outputTranscription.text;
-                 if (callbacks.onTranscription) callbacks.onTranscription(text, false);
-             } else if (message.serverContent?.inputTranscription) {
-                 const text = message.serverContent.inputTranscription.text;
-                  if (callbacks.onTranscription) callbacks.onTranscription(text, true);
-             }
-
-            if (message.serverContent?.turnComplete) {
-                // Turn complete logic if needed
-            }
-        },
-        onclose: () => {
-            console.log("Live Session Closed");
-            if (callbacks.onClose) callbacks.onClose();
-        },
-        onerror: (err) => {
-            console.error("Live Session Error", err);
-            if (callbacks.onError) callbacks.onError(err);
-        }
-      },
-      config: {
-        responseModalities: [Modality.AUDIO],
-        speechConfig: {
-            voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } }
-        },
-        systemInstruction: systemInstruction,
-        inputAudioTranscription: {}, 
-        outputAudioTranscription: {},
-      }
-    });
+          },
+          config: {
+            responseModalities: [Modality.AUDIO],
+            speechConfig: {
+                voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } }
+            },
+            systemInstruction: systemInstruction,
+            inputAudioTranscription: {}, 
+            outputAudioTranscription: {},
+          }
+        });
+    } catch (error) {
+        console.error("Connection failed", error);
+        if (callbacks.onError) callbacks.onError(error);
+        await this.disconnect();
+    }
   }
 
   private startAudioStream() {
@@ -85,6 +94,8 @@ export class LiveSession {
         
         this.sessionPromise?.then(session => {
             session.sendRealtimeInput({ media: pcmBlob });
+        }).catch(err => {
+            console.error("Error sending audio input", err);
         });
     };
 
@@ -113,25 +124,36 @@ export class LiveSession {
   }
 
   async disconnect() {
-    if (this.sessionPromise) {
-        /* There is no close method on the promise itself, but we can stop sending audio */
-        // Ideally we call session.close() if exposed, but currently we just teardown local audio
-    }
-    
-    if (this.stream) {
-        this.stream.getTracks().forEach(track => track.stop());
-    }
+    // Stop processing input audio
     if (this.processor && this.inputSource) {
         this.inputSource.disconnect();
         this.processor.disconnect();
+        this.processor = null;
+        this.inputSource = null;
     }
+
+    // Stop microphone stream
+    if (this.stream) {
+        this.stream.getTracks().forEach(track => track.stop());
+        this.stream = null;
+    }
+
+    // Close AudioContext
     if (this.audioContext) {
-        await this.audioContext.close();
+        if (this.audioContext.state !== 'closed') {
+            try {
+                await this.audioContext.close();
+            } catch (e) {
+                console.error("Error closing AudioContext", e);
+            }
+        }
+        this.audioContext = null;
     }
-    
+
+    // Reset session promise (we cannot explicitly close the session object in this SDK version easily, 
+    // but abandoning the promise and closing the websocket underneath via browser gc/timeout usually happens.
+    // Ideally we would call session.close() if available on the resolved value).
     this.sessionPromise = null;
-    this.audioContext = null;
-    this.stream = null;
   }
 }
 

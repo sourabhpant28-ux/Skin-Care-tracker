@@ -19,22 +19,46 @@ export const LiveAssistant: React.FC<Props> = ({ isOpen, onClose, userProfile })
   const nextStartTimeRef = useRef<number>(0);
   const sourcesRef = useRef<Set<AudioBufferSourceNode>>(new Set());
 
-  // Initialize session
+  // Handle cleanup when closing or unmounting
+  const cleanup = async () => {
+      // Disconnect session
+      if (liveSessionRef.current) {
+          await liveSessionRef.current.disconnect();
+          liveSessionRef.current = null;
+      }
+
+      // Stop all playing audio
+      sourcesRef.current.forEach(source => {
+          try { source.stop(); } catch (e) {}
+      });
+      sourcesRef.current.clear();
+      
+      // Close output audio context
+      if (audioContextRef.current) {
+          if (audioContextRef.current.state !== 'closed') {
+              try { await audioContextRef.current.close(); } catch (e) {}
+          }
+          audioContextRef.current = null;
+      }
+      
+      setIsActive(false);
+      setStatus('idle');
+  };
+
   useEffect(() => {
-    if (isOpen && !liveSessionRef.current) {
-        liveSessionRef.current = new LiveSession(process.env.API_KEY || '');
+    if (!isOpen) {
+        cleanup();
     }
-    
-    // Cleanup on unmount or close
     return () => {
-        if (!isOpen && liveSessionRef.current) {
-            handleDisconnect();
-        }
+        cleanup();
     };
   }, [isOpen]);
 
   const handleConnect = async () => {
-    if (!liveSessionRef.current) return;
+    // Ensure fresh start
+    await cleanup();
+    
+    liveSessionRef.current = new LiveSession(process.env.API_KEY || '');
     setStatus('connecting');
     
     // Setup Audio Output Context
@@ -52,8 +76,7 @@ export const LiveAssistant: React.FC<Props> = ({ isOpen, onClose, userProfile })
             setStatus('listening');
         },
         onClose: () => {
-            setIsActive(false);
-            setStatus('idle');
+            cleanup();
         },
         onAudioData: async (base64) => {
             setStatus('speaking');
@@ -82,36 +105,29 @@ export const LiveAssistant: React.FC<Props> = ({ isOpen, onClose, userProfile })
             };
         },
         onError: (err) => {
-            console.error(err);
-            setStatus('idle');
-            setIsActive(false);
+            console.error("Live Error:", err);
+            cleanup();
         },
         onTranscription: (text, isUser) => {
-            setTranscripts(prev => [...prev.slice(-4), {text, isUser}]); // Keep last 5
+            // Only add if it has content
+            if (!text.trim()) return;
+            
+            setTranscripts(prev => {
+                // Simple logic to append or update last message if it's the same speaker
+                // For this demo, just append to keep it simple, but limit history
+                const last = prev[prev.length - 1];
+                if (last && last.isUser === isUser) {
+                     return [...prev.slice(0, -1), { text: last.text + text, isUser }];
+                }
+                return [...prev.slice(-4), { text, isUser }];
+            });
         }
     }, systemInstruction);
   };
 
-  const handleDisconnect = async () => {
-    if (liveSessionRef.current) {
-        await liveSessionRef.current.disconnect();
-    }
-    // Stop all playing audio
-    sourcesRef.current.forEach(source => source.stop());
-    sourcesRef.current.clear();
-    
-    if (audioContextRef.current) {
-        await audioContextRef.current.close();
-        audioContextRef.current = null;
-    }
-    
-    setIsActive(false);
-    setStatus('idle');
-  };
-
   const toggleSession = () => {
     if (isActive) {
-        handleDisconnect();
+        cleanup();
     } else {
         handleConnect();
     }
@@ -173,11 +189,12 @@ export const LiveAssistant: React.FC<Props> = ({ isOpen, onClose, userProfile })
             <div className="p-4 bg-white border-t border-slate-100 flex justify-center">
                 <button 
                     onClick={toggleSession}
+                    disabled={status === 'connecting'}
                     className={`p-4 rounded-full transition-all duration-300 shadow-lg flex items-center justify-center gap-2 w-full max-w-[200px] font-semibold ${
                         isActive 
                         ? 'bg-rose-500 text-white hover:bg-rose-600' 
                         : 'bg-teal-500 text-white hover:bg-teal-600'
-                    }`}
+                    } ${status === 'connecting' ? 'opacity-50 cursor-not-allowed' : ''}`}
                 >
                     {isActive ? <><MicOff size={20} /> End Chat</> : <><Mic size={20} /> Start Chat</>}
                 </button>
