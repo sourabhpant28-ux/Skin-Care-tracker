@@ -1,0 +1,8 @@
+{
+  "name": "Skin Routine Tracker Pro",
+  "description": "A comprehensive skincare assistant that tracks routines, photos, and progress with AI-powered insights and real-time voice guidance.",
+  "requestFramePermissions": [
+    "microphone",
+    "camera"
+  ]
+}
