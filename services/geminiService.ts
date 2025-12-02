@@ -47,7 +47,7 @@ export const generateRoutineSuggestion = async (skinType: string, goals: string[
   }
 };
 
-export const analyzeSkinPhoto = async (base64Image: string, notes: string): Promise<string> => {
+export const analyzeSkinPhoto = async (base64Image: string, mimeType: string, notes: string): Promise<string> => {
   if (!apiKey) return "API Key missing. Cannot analyze.";
   
   try {
@@ -55,7 +55,7 @@ export const analyzeSkinPhoto = async (base64Image: string, notes: string): Prom
       model: "gemini-2.5-flash",
       contents: {
         parts: [
-          { inlineData: { mimeType: 'image/jpeg', data: base64Image } },
+          { inlineData: { mimeType: mimeType, data: base64Image } },
           { text: `Analyze this skin photo in context of these notes: "${notes}". specific focus on visible skin health. Be brief and supportive.` }
         ]
       }

@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import { Onboarding } from './components/Onboarding';
 import { RoutineManager } from './components/RoutineManager';
@@ -8,30 +9,51 @@ import { LiveAssistant } from './components/LiveAssistant';
 import { RoutineStep, UserProfile, PhotoEntry, SkinType } from './types';
 import { MOCK_INITIAL_STEPS } from './constants';
 import { generateRoutineSuggestion } from './services/geminiService';
-import { Layout, CheckSquare, List, PieChart, Mic, Image, User, Sparkles } from 'lucide-react';
+import { CheckSquare, List, PieChart, Mic, Image, User, Sparkles } from 'lucide-react';
+
+// Helper to get consistent date string (YYYY-MM-DD)
+const getTodayKey = () => new Date().toLocaleDateString('en-CA');
 
 export default function App() {
   // --- State ---
   const [profile, setProfile] = useState<UserProfile | null>(() => {
-    const saved = localStorage.getItem('skin_profile');
-    return saved ? JSON.parse(saved) : null;
+    try {
+        const saved = localStorage.getItem('skin_profile');
+        return saved ? JSON.parse(saved) : null;
+    } catch(e) { return null; }
   });
 
   const [routineSteps, setRoutineSteps] = useState<RoutineStep[]>(() => {
-    const saved = localStorage.getItem('skin_routine');
-    return saved ? JSON.parse(saved) : MOCK_INITIAL_STEPS;
+    try {
+        const saved = localStorage.getItem('skin_routine');
+        return saved ? JSON.parse(saved) : MOCK_INITIAL_STEPS;
+    } catch(e) { return MOCK_INITIAL_STEPS; }
   });
 
+  // History: Map of "YYYY-MM-DD" -> ["stepId1", "stepId2"]
+  const [history, setHistory] = useState<Record<string, string[]>>(() => {
+    try {
+        const saved = localStorage.getItem('skin_history');
+        return saved ? JSON.parse(saved) : {};
+    } catch(e) { return {}; }
+  });
+
+  // Completed Steps for Today
   const [completedSteps, setCompletedSteps] = useState<string[]>(() => {
-    const saved = localStorage.getItem('skin_completed_today');
-    // Simple logic: reset if date changed (in real app, check date string)
-    return saved ? JSON.parse(saved) : [];
+    const today = getTodayKey();
+    // If we have a record for today in history, use it.
+    if (history && history[today]) {
+        return history[today];
+    }
+    // Otherwise it's a new day (or first load), start empty.
+    return [];
   });
 
   const [photos, setPhotos] = useState<PhotoEntry[]>(() => {
-     // In a real app we wouldn't store base64 in localstorage due to limits, but for demo:
-     const saved = localStorage.getItem('skin_photos');
-     return saved ? JSON.parse(saved) : [];
+     try {
+        const saved = localStorage.getItem('skin_photos');
+        return saved ? JSON.parse(saved) : [];
+     } catch(e) { return []; }
   });
   
   const [activeTab, setActiveTab] = useState<'today' | 'routine' | 'photos' | 'analytics'>('today');
@@ -41,19 +63,38 @@ export default function App() {
 
   // --- Effects ---
   useEffect(() => {
-    if (profile) localStorage.setItem('skin_profile', JSON.stringify(profile));
+    try {
+        if (profile) localStorage.setItem('skin_profile', JSON.stringify(profile));
+    } catch (e) { console.error("Failed to save profile", e); }
   }, [profile]);
 
   useEffect(() => {
-    localStorage.setItem('skin_routine', JSON.stringify(routineSteps));
+    try {
+        localStorage.setItem('skin_routine', JSON.stringify(routineSteps));
+    } catch (e) { console.error("Failed to save routine", e); }
   }, [routineSteps]);
 
+  // Sync completedSteps to History and LocalStorage whenever it changes
   useEffect(() => {
-    localStorage.setItem('skin_completed_today', JSON.stringify(completedSteps));
+    const today = getTodayKey();
+    setHistory(prev => {
+        // Only update if actually different to avoid unnecessary writes/renders
+        if (JSON.stringify(prev[today]) === JSON.stringify(completedSteps)) return prev;
+
+        const newHistory = { ...prev, [today]: completedSteps };
+        try {
+            localStorage.setItem('skin_history', JSON.stringify(newHistory));
+        } catch (e) { console.error("Failed to save history", e); }
+        return newHistory;
+    });
   }, [completedSteps]);
   
   useEffect(() => {
-    localStorage.setItem('skin_photos', JSON.stringify(photos));
+    try {
+        localStorage.setItem('skin_photos', JSON.stringify(photos));
+    } catch (e) { 
+        console.error("Failed to save photos (likely storage limit)", e); 
+    }
   }, [photos]);
 
   // Determine time of day roughly on mount
@@ -61,6 +102,73 @@ export default function App() {
     const hour = new Date().getHours();
     setTimeOfDay(hour < 17 ? 'morning' : 'night');
   }, []);
+
+  // --- Calculations for Analytics ---
+  const getAnalyticsData = () => {
+    const today = getTodayKey();
+    const totalSteps = Math.max(routineSteps.length, 1); // Avoid division by zero
+    
+    // 1. Calculate Streak
+    // Logic: Consecutive days ending today or yesterday where > 0 steps were completed.
+    let streak = 0;
+    
+    // Check if today has activity
+    if ((history[today]?.length || 0) > 0) {
+        streak++;
+    }
+
+    // Check backwards from yesterday
+    let d = new Date();
+    d.setDate(d.getDate() - 1);
+    while (true) {
+        const k = d.toLocaleDateString('en-CA');
+        if ((history[k]?.length || 0) > 0) {
+            streak++;
+            d.setDate(d.getDate() - 1);
+        } else {
+            break;
+        }
+    }
+
+    // 2. Last 7 Days History
+    const chartData = [];
+    let sum7 = 0;
+    for (let i = 6; i >= 0; i--) {
+         const d = new Date();
+         d.setDate(d.getDate() - i);
+         const k = d.toLocaleDateString('en-CA');
+         const dayLabel = d.toLocaleDateString('en-US', { weekday: 'short' });
+         
+         const count = history[k]?.length || 0;
+         const pct = Math.min(100, Math.round((count / totalSteps) * 100));
+         
+         chartData.push({ day: dayLabel, value: pct });
+         sum7 += pct;
+    }
+    const avg7 = Math.round(sum7 / 7);
+
+    // 3. Monthly Completion
+    let sum30 = 0;
+    for (let i = 29; i >= 0; i--) {
+         const d = new Date();
+         d.setDate(d.getDate() - i);
+         const k = d.toLocaleDateString('en-CA');
+         
+         const count = history[k]?.length || 0;
+         const pct = Math.min(100, Math.round((count / totalSteps) * 100));
+         sum30 += pct;
+    }
+    const avg30 = Math.round(sum30 / 30);
+
+    return {
+        streak,
+        last7DaysCompletion: avg7,
+        monthlyCompletion: avg30,
+        completionHistory: chartData
+    };
+  };
+
+  const analyticsData = getAnalyticsData();
 
   // --- Handlers ---
 
@@ -176,9 +284,10 @@ export default function App() {
                         Night
                     </button>
                 </div>
+
                 <DailyChecklist 
-                    steps={routineSteps} 
-                    completedSteps={completedSteps} 
+                    steps={routineSteps}
+                    completedSteps={completedSteps}
                     onToggleStep={toggleStepCompletion}
                     currentMode={timeOfDay}
                 />
@@ -208,60 +317,55 @@ export default function App() {
         {activeTab === 'analytics' && (
             <Analytics 
                 data={{
-                    last7DaysCompletion: 85,
-                    monthlyCompletion: 72,
-                    streak: profile.isPro ? 12 : 3 // Mock data
+                    last7DaysCompletion: analyticsData.last7DaysCompletion,
+                    monthlyCompletion: analyticsData.monthlyCompletion,
+                    streak: analyticsData.streak
                 }}
-                completionHistory={[
-                    { day: 'M', value: 80 }, { day: 'T', value: 100 }, { day: 'W', value: 40 },
-                    { day: 'T', value: 90 }, { day: 'F', value: 100 }, { day: 'S', value: 60 }, { day: 'S', value: 85 }
-                ]}
+                completionHistory={analyticsData.completionHistory}
                 isPro={profile.isPro}
                 onUnlock={unlockPro}
             />
         )}
-
       </main>
 
-      {/* Bottom Nav */}
-      <nav className="fixed bottom-0 w-full max-w-lg bg-white border-t border-slate-100 p-2 z-40 flex justify-around items-center pb-safe">
+      {/* Navigation */}
+      <nav className="fixed bottom-0 w-full max-w-lg bg-white border-t border-slate-200 p-2 flex justify-around items-center z-40">
         <button 
             onClick={() => setActiveTab('today')}
             className={`flex flex-col items-center p-2 rounded-xl transition-colors ${activeTab === 'today' ? 'text-teal-600' : 'text-slate-400 hover:text-slate-600'}`}
         >
-            <CheckSquare size={24} />
+            <CheckSquare size={24} className={activeTab === 'today' ? 'fill-current' : ''} />
             <span className="text-[10px] font-medium mt-1">Today</span>
         </button>
         <button 
-             onClick={() => setActiveTab('routine')}
-             className={`flex flex-col items-center p-2 rounded-xl transition-colors ${activeTab === 'routine' ? 'text-teal-600' : 'text-slate-400 hover:text-slate-600'}`}
+            onClick={() => setActiveTab('routine')}
+            className={`flex flex-col items-center p-2 rounded-xl transition-colors ${activeTab === 'routine' ? 'text-teal-600' : 'text-slate-400 hover:text-slate-600'}`}
         >
             <List size={24} />
             <span className="text-[10px] font-medium mt-1">Routine</span>
         </button>
         <button 
-             onClick={() => setActiveTab('photos')}
-             className={`flex flex-col items-center p-2 rounded-xl transition-colors ${activeTab === 'photos' ? 'text-teal-600' : 'text-slate-400 hover:text-slate-600'}`}
+            onClick={() => setActiveTab('photos')}
+            className={`flex flex-col items-center p-2 rounded-xl transition-colors ${activeTab === 'photos' ? 'text-teal-600' : 'text-slate-400 hover:text-slate-600'}`}
         >
             <Image size={24} />
             <span className="text-[10px] font-medium mt-1">Photos</span>
         </button>
         <button 
-             onClick={() => setActiveTab('analytics')}
-             className={`flex flex-col items-center p-2 rounded-xl transition-colors ${activeTab === 'analytics' ? 'text-teal-600' : 'text-slate-400 hover:text-slate-600'}`}
+            onClick={() => setActiveTab('analytics')}
+            className={`flex flex-col items-center p-2 rounded-xl transition-colors ${activeTab === 'analytics' ? 'text-teal-600' : 'text-slate-400 hover:text-slate-600'}`}
         >
             <PieChart size={24} />
             <span className="text-[10px] font-medium mt-1">Progress</span>
         </button>
       </nav>
 
-      {/* Live Assistant Modal */}
+      {/* Voice Assistant Modal */}
       <LiveAssistant 
-        isOpen={isLiveOpen} 
-        onClose={() => setIsLiveOpen(false)} 
+        isOpen={isLiveOpen}
+        onClose={() => setIsLiveOpen(false)}
         userProfile={profile}
       />
-      
     </div>
   );
 }
