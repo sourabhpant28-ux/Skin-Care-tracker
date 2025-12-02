@@ -236,21 +236,34 @@ export default function App() {
     <div className="min-h-screen bg-slate-50 flex flex-col max-w-lg mx-auto border-x border-slate-100 shadow-2xl shadow-slate-200/50">
       
       {/* Header */}
-      <header className="bg-white border-b border-slate-100 p-4 sticky top-0 z-40 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-            <div className="bg-teal-500 rounded-lg p-1.5">
-                <Sparkles size={18} className="text-white" />
+      <header className="bg-white border-b border-slate-100 px-5 py-3 sticky top-0 z-40 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+            {/* Custom Logo Icon */}
+            <div className="w-11 h-11 bg-[#facbb1] rounded-xl flex items-center justify-center shadow-sm relative shrink-0">
+                 <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    {/* Phone Body */}
+                    <rect x="5" y="2" width="14" height="20" rx="3" stroke="#3f2e26" strokeWidth="2.5"/>
+                    {/* Speaker Notch */}
+                    <path d="M10 5H14" stroke="#3f2e26" strokeWidth="2.5" strokeLinecap="round"/>
+                    {/* Checkmark */}
+                    <path d="M8 12L10.5 14.5L16 9" stroke="#3f2e26" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
+                 </svg>
             </div>
-            <h1 className="font-bold text-slate-800 tracking-tight">SkinTracker<span className="text-teal-500">Pro</span></h1>
+            {/* Logo Text */}
+            <div className="flex flex-col leading-none justify-center">
+                <h1 className="font-bold text-[#3f2e26] text-lg tracking-tight leading-none">Skin Routine</h1>
+                <h1 className="font-bold text-[#3f2e26] text-lg tracking-tight leading-none">Tracker</h1>
+            </div>
         </div>
-        <div className="flex gap-2">
+
+        <div className="flex gap-2 items-center">
              {!profile.isPro && (
                  <button onClick={unlockPro} className="text-xs font-bold text-teal-600 bg-teal-50 px-2 py-1 rounded-md hover:bg-teal-100">
                      UPGRADE
                  </button>
              )}
-             <div className="w-8 h-8 bg-slate-100 rounded-full flex items-center justify-center text-slate-500">
-                 <User size={16} />
+             <div className="w-9 h-9 bg-slate-100 rounded-full flex items-center justify-center text-slate-500 hover:bg-slate-200 transition-colors cursor-pointer">
+                 <User size={18} />
              </div>
         </div>
       </header>
